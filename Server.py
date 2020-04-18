@@ -69,6 +69,8 @@ def getObject(objectId):
     return json.dumps(cur.fetchone())
 
 
+
+
 @app.route('/addOwnObject')
 def addOwnObject():
     cur = get_db().cursor()
@@ -96,7 +98,7 @@ def changeState(objectId, value, db=None):
     if db is None:
         db = get_db()
     cur = db.cursor()
-    cur.execute("SELECT * FROM objects where object_id = ?", objectId)
+    cur.execute("SELECT * FROM objects where object_id = ?", (objectId, ))
     obj = cur.fetchone()
     msg = {"nodeId": int(obj["node_id"]),
            "objectId": int(obj["internal_id"]),
@@ -133,6 +135,11 @@ def getEvents(objectId):
     cur.execute("SELECT * FROM events where object_id = ?", objectId)
     obj = cur.fetchall()
     return json.dumps(obj)
+
+@app.route('/emitEvent/<objectId>')
+def emitEvent(objectId):
+    processEvent(objectId, get_db())
+    return jsonify(success=True)
 
 
 @app.route('/update/<objectId>')
@@ -204,7 +211,7 @@ def eventHandler(data, db):
 
 def processEvent(objectId, db):
     cur = db.cursor()
-    cur.execute("Select * from scenarios where from_object_id = ?", objectId)
+    cur.execute("Select * from scenarios where from_object_id = ?", (objectId, ))
     steps = cur.fetchall()
     for step in steps:
         targetObjectId = step["to_object"]
