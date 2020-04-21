@@ -5,6 +5,8 @@ import json
 import logging
 import sqlite3
 
+from model import MessageType, MsgFields, ObjectType
+
 app = Flask(__name__)
 app.config['MQTT_BROKER_URL'] = '127.0.0.1'
 app.config['MQTT_BROKER_PORT'] = 1883
@@ -69,12 +71,9 @@ def getObject(objectId):
     return json.dumps(cur.fetchone())
 
 
-
-
 @app.route('/addOwnObject')
 def addOwnObject():
     cur = get_db().cursor()
-    objectType = request.args.get('type', default='switch')
     name = request.args.get('name', default='Sztuczny obiekt')
     description = request.args.get('description', default='Sztuczny obiekt')
     cur.execute("SELECT min(node_id) as nodeId from objects where node_id < 0 ")
@@ -84,10 +83,10 @@ def addOwnObject():
         lastNodeId = 0
     newNodeId = lastNodeId - 1
     cur.execute("Insert into objects (node_id, internal_id, type, name, description) values (?, 1, ?, ?, ?)",
-                (newNodeId, objectType, name, description))
+                (newNodeId, ObjectType.AppEvent, name, description))
     get_db().commit()
 
-    cur.execute("SELECT * FROM objects where node_id  = ?", (newNodeId, ))
+    cur.execute("SELECT * FROM objects where node_id  = ?", (newNodeId,))
     obj = cur.fetchone()
 
     return jsonify(objectId=obj["object_id"])
@@ -98,12 +97,12 @@ def changeState(objectId, value, db=None):
     if db is None:
         db = get_db()
     cur = db.cursor()
-    cur.execute("SELECT * FROM objects where object_id = ?", (objectId, ))
+    cur.execute("SELECT * FROM objects where object_id = ?", (objectId,))
     obj = cur.fetchone()
-    msg = {"nodeId": int(obj["node_id"]),
-           "objectId": int(obj["internal_id"]),
-           "type": "change",
-           "value": int(value)}
+    msg = {MsgFields.NodeId: int(obj["node_id"]),
+           MsgFields.ObjectId: int(obj["internal_id"]),
+           MsgFields.Type: "change",
+           MsgFields.Value: int(value)}
     mqtt.publish("painlessMesh/to/" + str(obj["node_id"]), json.dumps(msg))
     return jsonify(success=True)
 
@@ -113,10 +112,10 @@ def readState(objectId, value):
     cur = get_db().cursor()
     cur.execute("SELECT * FROM objects where object_id = ?", objectId)
     obj = cur.fetchone()
-    msg = {"nodeId": int(obj["node_id"]),
-           "objectId": int(obj["internal_id"]),
-           "type": "change",
-           "value": int(value)}
+    msg = {MsgFields.NodeId: int(obj["node_id"]),
+           MsgFields.ObjectId: int(obj["internal_id"]),
+           MsgFields.Type: "change",
+           MsgFields.Value: int(value)}
     mqtt.publish("painlessMesh/to/" + obj["node_id"], json.dumps(msg))
     return jsonify(success=True)
 
@@ -135,6 +134,7 @@ def getEvents(objectId):
     cur.execute("SELECT * FROM events where object_id = ?", objectId)
     obj = cur.fetchall()
     return json.dumps(obj)
+
 
 @app.route('/emitEvent/<objectId>')
 def emitEvent(objectId):
@@ -168,7 +168,7 @@ def saveValue(data, db):
     cur = db.cursor()
     cur.execute(
         'Update objects set value = ? where node_id =? and internal_id = ? ',
-        (data["value"], data["nodeId"], data["objectId"]))
+        (data[MsgFields.Value], data[MsgFields.NodeId], data[MsgFields.ObjectId]))
     db.commit()
     log("saveValue<<")
 
@@ -176,10 +176,10 @@ def saveValue(data, db):
 def checkAndAddToDatabase(data, db):
     cur = db.cursor()
     cur.execute("SELECT count(*) as cnt from objects where node_id = ? and internal_id = ?",
-                (data["nodeId"], data["objectId"]))
+                (data[MsgFields.NodeId], data[MsgFields.ObjectId]))
     if cur.fetchone()["cnt"] == 0:
         cur.execute("Insert into objects (node_id, internal_id, type) values (?, ?, ?)",
-                    (data["nodeId"], data["objectId"], data.get("objectType", "switch")))
+                    (data[MsgFields.NodeId], data[MsgFields.ObjectId], data.get(MsgFields.ObjectType, "switch")))
         db.commit()
         log(">>new Object add<<")
 
@@ -187,23 +187,23 @@ def checkAndAddToDatabase(data, db):
 def saveRead(data, db):
     cur = db.cursor()
     cur.execute("SELECT object_id from objects where node_id =? and internal_id = ?",
-                (data["nodeId"], data["objectId"]))
+                (data[MsgFields.NodeId], data[MsgFields.ObjectId]))
     obj = cur.fetchone()
     cur.execute(
         'Insert into reads (object_id, value) values (?,?)',
-        (obj["object_id"], data["value"]))
+        (obj["object_id"], data[MsgFields.Value]))
     db.commit()
 
 
 def eventHandler(data, db):
     cur = db.cursor()
     cur.execute("SELECT object_id from objects where node_id =? and internal_id = ?",
-                (data["nodeId"], data["objectId"]))
+                (data[MsgFields.NodeId], data[MsgFields.ObjectId]))
     obj = cur.fetchone()
     objId = obj["object_id"]
     cur.execute(
         'Insert into events (object_id, value) values (?,?)',
-        (objId, data["value"]))
+        (objId, data[MsgFields.Value]))
 
     processEvent(objId, db)
     db.commit()
@@ -211,12 +211,17 @@ def eventHandler(data, db):
 
 def processEvent(objectId, db):
     cur = db.cursor()
-    cur.execute("Select * from scenarios where from_object_id = ?", (objectId, ))
-    steps = cur.fetchall()
-    for step in steps:
-        targetObjectId = step["to_object"]
-        value = step["new_value"]
-        changeState(targetObjectId, value, db)
+    cur.execute("Select * from Scenarios where object_Id = ?", (objectId,))
+    scenarios = cur.fetchall()
+    for scenario in scenarios:
+        if True:  # TODO dodać sprawdzanie warunku
+            cur.execute("Select * from steps where scenario_id = ?", (scenario["scenario_id"],))
+            steps = cur.fetchall()
+            for step in steps:
+                targetObjectId = step["to_object"]
+                value = step["new_value"]
+                changeState(targetObjectId, value, db)
+                # TODO dodać obsługę opoznieniemnia
 
 
 @mqtt.on_message()
@@ -229,15 +234,13 @@ def on_message(client, userdata, msg):
         log(data)
         checkAndAddToDatabase(data, db)
 
-        type = data["type"]
-        if type == "read-value":
+        msgType = data[MsgFields.Type]
+        if msgType == MessageType.ReadValue:
             saveValue(data, db)
-        elif type == "new-value":
+        elif msgType == MessageType.NewValue:
             saveRead(data, db)
-        elif type == "event":
+        elif msgType == MessageType.Event:
             eventHandler(data, db)
-        elif type == "hello":
-            checkAndAddToDatabase(data, db)
     finally:
         db.close()
 
