@@ -62,13 +62,35 @@ def getObjects():
     return json.dumps(cur.fetchall())
 
 
+@app.route('/scenarios')
+def getScenarios():
+    cur = get_db().cursor()
+    cur.execute("SELECT * FROM objects")
+
+    return json.dumps(cur.fetchall())
+
+
+@app.route('/scenarios/<objectId>')
+def getScenariosForObject(objectId):
+    cur = get_db().cursor()
+    cur.execute("SELECT * FROM Scenarios where objectId = ?", objectId)
+
+    return json.dumps(cur.fetchall())
+
+
+@app.route('/steps/<scenarioId>')
+def getSteps(scenarioId):
+    cur = get_db().cursor()
+    cur.execute("SELECT * FROM steps where scenarioId = ?", scenarioId)
+
+    return json.dumps(cur.fetchall())
+
+
 @app.route('/object/<objectId>')
 def getObject(objectId):
     cur = get_db().cursor()
-    cur.execute("SELECT * FROM objects where object_id = ?", objectId)
+    cur.execute("SELECT * FROM objects where objectId = ?", objectId)
     return json.dumps(cur.fetchone())
-
-
 
 
 @app.route('/addOwnObject')
@@ -77,20 +99,67 @@ def addOwnObject():
     objectType = request.args.get('type', default='switch')
     name = request.args.get('name', default='Sztuczny obiekt')
     description = request.args.get('description', default='Sztuczny obiekt')
-    cur.execute("SELECT min(node_id) as nodeId from objects where node_id < 0 ")
+    cur.execute("SELECT min(nodeId) as nodeId from objects where nodeId < 0 ")
     res = cur.fetchone()
     lastNodeId = res.get("nodeId")
     if lastNodeId is None:
         lastNodeId = 0
     newNodeId = lastNodeId - 1
-    cur.execute("Insert into objects (node_id, internal_id, type, name, description) values (?, 1, ?, ?, ?)",
+    cur.execute("Insert into objects (nodeId, internalId, type, name, description) values (?, 1, ?, ?, ?)",
                 (newNodeId, objectType, name, description))
     get_db().commit()
 
-    cur.execute("SELECT * FROM objects where node_id  = ?", (newNodeId, ))
+    cur.execute("SELECT * FROM objects where nodeId  = ?", (newNodeId,))
     obj = cur.fetchone()
 
-    return jsonify(objectId=obj["object_id"])
+    return jsonify(objectId=obj["objectId"])
+
+
+@app.route('/deleteScenario/<scenarioId>')
+def deleteScenario(scenarioId):
+    cur = get_db().cursor()
+    cur.execute("DELETE FROM steps where scenarioId = ?", scenarioId)
+    cur.execute("DELETE FROM Scenarios where scenarioId = ?", scenarioId)
+
+    return jsonify(success=True)
+
+
+@app.route('/addScenario', methods=['POST'])
+def addScenario():
+    cur = get_db().cursor()
+    data = request.get_json()
+    objectId = data['objectId']
+    condition = data['condition']
+    conditionValue = data['conditionValue']
+    cur.execute("Insert into Scenarios (objectId, condition, conditionValue) values (?, ?, ?)",
+                (objectId, condition, conditionValue))
+    get_db().commit()
+
+    return jsonify(scenarioId=cur.lastrowid)
+
+
+@app.route('/addStep', methods=['POST'])
+def addStep():
+    cur = get_db().cursor()
+    data = request.get_json()
+    toObject = data['toObject']
+    scenarioId = data['scenarioId']
+    newValue = data['newValue']
+    delay = data['delay']
+    onTime = data['onTime']
+    cur.execute("Insert into steps (scenarioId, toObject, newValue, delay, onTime) values (?, ?, ?, ?, ?)",
+                (scenarioId, toObject, newValue, delay, onTime))
+    get_db().commit()
+
+    return jsonify(stepId=cur.lastrowid)
+
+
+@app.route('/deleteStep/<stepId>')
+def deleteScenario(stepId):
+    cur = get_db().cursor()
+    cur.execute("DELETE FROM steps where id = ?", stepId)
+
+    return jsonify(success=True)
 
 
 @app.route('/change/<objectId>/<value>')
@@ -98,33 +167,33 @@ def changeState(objectId, value, db=None):
     if db is None:
         db = get_db()
     cur = db.cursor()
-    cur.execute("SELECT * FROM objects where object_id = ?", (objectId, ))
+    cur.execute("SELECT * FROM objects where objectId = ?", (objectId,))
     obj = cur.fetchone()
-    msg = {"nodeId": int(obj["node_id"]),
-           "objectId": int(obj["internal_id"]),
+    msg = {"nodeId": int(obj["nodeId"]),
+           "objectId": int(obj["internalId"]),
            "type": "change",
            "value": int(value)}
-    mqtt.publish("painlessMesh/to/" + str(obj["node_id"]), json.dumps(msg))
+    mqtt.publish("painlessMesh/to/" + str(obj["nodeId"]), json.dumps(msg))
     return jsonify(success=True)
 
 
 @app.route('/read/<objectId>')
 def readState(objectId, value):
     cur = get_db().cursor()
-    cur.execute("SELECT * FROM objects where object_id = ?", objectId)
+    cur.execute("SELECT * FROM objects where objectId = ?", objectId)
     obj = cur.fetchone()
-    msg = {"nodeId": int(obj["node_id"]),
-           "objectId": int(obj["internal_id"]),
+    msg = {"nodeId": int(obj["nodeId"]),
+           "objectId": int(obj["internalId"]),
            "type": "change",
            "value": int(value)}
-    mqtt.publish("painlessMesh/to/" + obj["node_id"], json.dumps(msg))
+    mqtt.publish("painlessMesh/to/" + obj["nodeId"], json.dumps(msg))
     return jsonify(success=True)
 
 
 @app.route('/reads/<objectId>')
 def getReads(objectId):
     cur = get_db().cursor()
-    cur.execute("SELECT * FROM reads where object_id = ?", objectId)
+    cur.execute("SELECT * FROM reads where objectId = ?", objectId)
     obj = cur.fetchall()
     return json.dumps(obj)
 
@@ -132,9 +201,10 @@ def getReads(objectId):
 @app.route('/events/<objectId>')
 def getEvents(objectId):
     cur = get_db().cursor()
-    cur.execute("SELECT * FROM events where object_id = ?", objectId)
+    cur.execute("SELECT * FROM events where objectId = ?", objectId)
     obj = cur.fetchall()
     return json.dumps(obj)
+
 
 @app.route('/emitEvent/<objectId>')
 def emitEvent(objectId):
@@ -145,12 +215,12 @@ def emitEvent(objectId):
 @app.route('/update/<objectId>')
 def updateObject(objectId):
     cur = get_db().cursor()
-    cur.execute("SELECT * FROM objects where object_id = ?", objectId)
+    cur.execute("SELECT * FROM objects where objectId = ?", objectId)
     obj = cur.fetchone()
     name = request.args.get('name', default=obj["name"])
     description = request.args.get('description', default=obj["description"])
     objType = request.args.get('type', default=obj["type"])
-    cur.execute("Update objects set name = ?, description = ?, type = ? where object_id = ? ",
+    cur.execute("Update objects set name = ?, description = ?, type = ? where objectId = ? ",
                 (name, description, objType, objectId))
     get_db().commit()
     return jsonify(success=True)
@@ -166,7 +236,7 @@ def saveValue(data, db):
     log(">>saveValue")
     cur = db.cursor()
     cur.execute(
-        'Update objects set value = ? where node_id =? and internal_id = ? ',
+        'Update objects set value = ? where nodeId =? and internalId = ? ',
         (data["value"], data["nodeId"], data["objectId"]))
     db.commit()
     log("saveValue<<")
@@ -174,10 +244,10 @@ def saveValue(data, db):
 
 def checkAndAddToDatabase(data, db):
     cur = db.cursor()
-    cur.execute("SELECT count(*) as cnt from objects where node_id = ? and internal_id = ?",
+    cur.execute("SELECT count(*) as cnt from objects where nodeId = ? and internalId = ?",
                 (data["nodeId"], data["objectId"]))
     if cur.fetchone()["cnt"] == 0:
-        cur.execute("Insert into objects (node_id, internal_id, type) values (?, ?, ?)",
+        cur.execute("Insert into objects (nodeId, internalId, type) values (?, ?, ?)",
                     (data["nodeId"], data["objectId"], data.get("objectType", "switch")))
         db.commit()
         log(">>new Object add<<")
@@ -185,23 +255,23 @@ def checkAndAddToDatabase(data, db):
 
 def saveRead(data, db):
     cur = db.cursor()
-    cur.execute("SELECT object_id from objects where node_id =? and internal_id = ?",
+    cur.execute("SELECT objectId from objects where nodeId =? and internalId = ?",
                 (data["nodeId"], data["objectId"]))
     obj = cur.fetchone()
     cur.execute(
-        'Insert into reads (object_id, value) values (?,?)',
-        (obj["object_id"], data["value"]))
+        'Insert into reads (objectId, value) values (?,?)',
+        (obj["objectId"], data["value"]))
     db.commit()
 
 
 def eventHandler(data, db):
     cur = db.cursor()
-    cur.execute("SELECT object_id from objects where node_id =? and internal_id = ?",
+    cur.execute("SELECT objectId from objects where nodeId =? and internalId = ?",
                 (data["nodeId"], data["objectId"]))
     obj = cur.fetchone()
-    objId = obj["object_id"]
+    objId = obj["objectId"]
     cur.execute(
-        'Insert into events (object_id, value) values (?,?)',
+        'Insert into events (objectId, value) values (?,?)',
         (objId, data["value"]))
     log("event hander")
     processEvent(objId, db)
@@ -210,15 +280,15 @@ def eventHandler(data, db):
 
 def processEvent(objectId, db):
     cur = db.cursor()
-    cur.execute("Select * from Scenarios where object_Id = ?", (objectId,))
+    cur.execute("Select * from Scenarios where objectId = ?", (objectId,))
     scenarios = cur.fetchall()
     for scenario in scenarios:
         if True:  # TODO dodać sprawdzanie warunku
-            cur.execute("Select * from steps where scenario_id = ?", (scenario["scenario_id"],))
+            cur.execute("Select * from steps where scenarioId = ?", (scenario["scenarioId"],))
             steps = cur.fetchall()
             for step in steps:
-                targetObjectId = step["to_object"]
-                value = step["new_value"]
+                targetObjectId = step["toObject"]
+                value = step["newValue"]
                 changeState(targetObjectId, value, db)
                 # TODO dodać obsługę opoznieniemnia
 
