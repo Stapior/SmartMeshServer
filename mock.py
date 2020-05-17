@@ -81,7 +81,7 @@ def emitTemp(nodeId, internalId):
 
 
 @app.route('/emitMockHumidity/<nodeId>/<internalId>')
-def emitTemp(nodeId, internalId):
+def emitHum(nodeId, internalId):
     hum = request.args.get('value', default=30)
     msg = {"nodeId": nodeId,
            "objectId": internalId,

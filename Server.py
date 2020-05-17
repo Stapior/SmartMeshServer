@@ -130,9 +130,9 @@ def deleteScenario(scenarioId):
 def addScenario():
     cur = get_db().cursor()
     data = request.get_json()
-    objectId = data['objectId']
-    condition = data['condition']
-    conditionValue = data['conditionValue']
+    objectId = data.get('objectId')
+    condition = data.get('condition')
+    conditionValue = data.get('conditionValue')
     cur.execute("Insert into Scenarios (objectId, condition, conditionValue) values (?, ?, ?)",
                 (objectId, condition, conditionValue))
     get_db().commit()
@@ -144,11 +144,11 @@ def addScenario():
 def addStep():
     cur = get_db().cursor()
     data = request.get_json()
-    toObject = data['toObject']
-    scenarioId = data['scenarioId']
-    newValue = data['newValue']
-    delay = data['delay']
-    onTime = data['onTime']
+    toObject = data.get('toObject')
+    scenarioId = data.get('scenarioId')
+    newValue = data.get('newValue')
+    delay = data.get('delay')
+    onTime = data.get('onTime')
     cur.execute("Insert into steps (scenarioId, toObject, newValue, delay, onTime) values (?, ?, ?, ?, ?)",
                 (scenarioId, toObject, newValue, delay, onTime))
     get_db().commit()
@@ -157,7 +157,7 @@ def addStep():
 
 
 @app.route('/deleteStep/<stepId>')
-def deleteScenario(stepId):
+def deleteStep(stepId):
     cur = get_db().cursor()
     cur.execute("DELETE FROM steps where id = ?", stepId)
 
@@ -166,7 +166,9 @@ def deleteScenario(stepId):
 
 @app.route('/change/<objectId>/<value>')
 def changeState(objectId, value, db=None):
+    skipReturn = True
     if db is None:
+        skipReturn = False
         db = get_db()
     cur = db.cursor()
     cur.execute("SELECT * FROM objects where objectId = ?", (objectId,))
@@ -176,7 +178,8 @@ def changeState(objectId, value, db=None):
            "type": "change",
            "value": int(value)}
     mqtt.publish("painlessMesh/to/" + str(obj["nodeId"]), json.dumps(msg))
-    return jsonify(success=True)
+    if not skipReturn:
+        return jsonify(success=True)
 
 
 @app.route('/read/<objectId>')
@@ -302,10 +305,10 @@ def processEvent(objectId, value, db):
 def executeStep(step):
     db = get_mqtt_db()
     targetObjectId = step["toObject"]
-    cur = get_db().cursor()
-    cur.execute("SELECT * FROM objects where objectId = ?", targetObjectId)
+    cur = db.cursor()
+    cur.execute("SELECT * FROM objects where objectId = ?", (targetObjectId, ))
     obj = cur.fetchone()
-    previousValue = obj.get("value", default=0)
+    previousValue = obj["value"]
     value = step["newValue"]
     changeState(targetObjectId, value, db)
     onTime = step.get("onTime")
