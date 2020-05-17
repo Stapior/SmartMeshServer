@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-from flask import Flask, current_app, g, jsonify, request
-from flask_mqtt import Mqtt
 import json
 import logging
 import sqlite3
+
+from flask import Flask, current_app, g, jsonify, request
+from flask_mqtt import Mqtt
+from threading import Timer
 
 app = Flask(__name__)
 app.config['MQTT_BROKER_URL'] = '127.0.0.1'
@@ -208,7 +210,8 @@ def getEvents(objectId):
 
 @app.route('/emitEvent/<objectId>')
 def emitEvent(objectId):
-    processEvent(objectId, get_db())
+    value = request.args.get('value', default=1)
+    processEvent(objectId, value, get_db())
     return jsonify(success=True)
 
 
@@ -270,27 +273,67 @@ def eventHandler(data, db):
                 (data["nodeId"], data["objectId"]))
     obj = cur.fetchone()
     objId = obj["objectId"]
+    value = data["value"]
     cur.execute(
         'Insert into events (objectId, value) values (?,?)',
-        (objId, data["value"]))
+        (objId, value))
     log("event hander")
-    processEvent(objId, db)
+    processEvent(objId, value, db)
     db.commit()
 
 
-def processEvent(objectId, db):
+def processEvent(objectId, value, db):
     cur = db.cursor()
     cur.execute("Select * from Scenarios where objectId = ?", (objectId,))
     scenarios = cur.fetchall()
     for scenario in scenarios:
-        if True:  # TODO dodać sprawdzanie warunku
+        if checkScenarioCondition(scenario, value):
             cur.execute("Select * from steps where scenarioId = ?", (scenario["scenarioId"],))
             steps = cur.fetchall()
             for step in steps:
-                targetObjectId = step["toObject"]
-                value = step["newValue"]
-                changeState(targetObjectId, value, db)
-                # TODO dodać obsługę opoznieniemnia
+                delay = step.get("delay")
+                if delay is not None:
+                    t = Timer(delay, executeStep, [step])
+                    t.start()
+                else:
+                    executeStep(step)
+
+
+def executeStep(step):
+    db = get_mqtt_db()
+    targetObjectId = step["toObject"]
+    cur = get_db().cursor()
+    cur.execute("SELECT * FROM objects where objectId = ?", targetObjectId)
+    obj = cur.fetchone()
+    previousValue = obj.get("value", default=0)
+    value = step["newValue"]
+    changeState(targetObjectId, value, db)
+    onTime = step.get("onTime")
+    if onTime is not None:
+        t = Timer(onTime, switchOff, [targetObjectId, previousValue])
+        t.start()
+
+
+def switchOff(objId, previousValue):
+    db = get_mqtt_db()
+    changeState(objId, previousValue, db)
+
+
+def checkScenarioCondition(scenario, value):
+    condition = scenario.get("condition")
+    conditionValue = scenario.get("conditionValue")
+    if condition is not None and conditionValue is not None:
+        if condition == "=":
+            return value == conditionValue
+        if condition == "<=":
+            return value <= conditionValue
+        if condition == ">=":
+            return value >= conditionValue
+        if condition == "<":
+            return value < conditionValue
+        if condition == ">":
+            return value > conditionValue
+    return True
 
 
 @mqtt.on_message()
