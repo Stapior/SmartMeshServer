@@ -1,11 +1,9 @@
-#!/usr/bin/env python3
 import json
 import logging
 import sqlite3
 
 from flask import Flask, current_app, g, jsonify, request
 from flask_mqtt import Mqtt
-from threading import Timer
 
 app = Flask(__name__)
 app.config['MQTT_BROKER_URL'] = '127.0.0.1'
@@ -120,4 +118,4 @@ def on_message(client, userdata, msg):
 
 if __name__ == '__main__':
     mqtt.init_app(app)
-    app.run(host='192.168.0.20', port=4666, use_reloader=False, debug=False)
+    app.run(host='localhost', port=4666, use_reloader=False, debug=False)
