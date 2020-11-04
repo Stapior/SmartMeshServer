@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 import json
 import logging
+import time
 import sqlite3
+import firebase_admin
+from firebase_admin import credentials, firestore, initialize_app
+
+
 
 from flask import Flask, current_app, g, jsonify, request
 from flask_mqtt import Mqtt
 from threading import Timer
+
+
+cred = credentials.Certificate("./firebase/cert.json")
+default_app = initialize_app(cred)
+db = firestore.client()
+reads_ref = db.collection('reads')
 
 app = Flask(__name__)
 app.config['MQTT_BROKER_URL'] = '127.0.0.1'
@@ -62,6 +73,15 @@ def getObjects():
     cur.execute("SELECT * FROM objects")
 
     return json.dumps(cur.fetchall())
+
+
+@app.route('/')
+def getObjects2():
+    cur = get_db().cursor()
+    cur.execute("SELECT * FROM objects")
+
+    return json.dumps(cur.fetchall())
+
 
 
 @app.route('/scenarios')
@@ -245,6 +265,7 @@ def saveValue(data, db):
         'Update objects set value = ? where nodeId =? and internalId = ? ',
         (data["value"], data["nodeId"], data["objectId"]))
     db.commit()
+    reads_ref.document(str(data["nodeId"]) + '-' + str(data["objectId"])).collection('values').document(str(time.time())).set(data)
     log("saveValue<<")
 
 
@@ -267,6 +288,7 @@ def saveRead(data, db):
     cur.execute(
         'Insert into reads (objectId, value) values (?,?)',
         (obj["objectId"], data["value"]))
+    reads_ref.document(str(data["nodeId"]) + '/' + str(data["objectId"])).set(data)
     db.commit()
 
 
@@ -364,4 +386,4 @@ def on_message(client, userdata, msg):
 
 if __name__ == '__main__':
     mqtt.init_app(app)
-    app.run(host='192.168.0.20', port=4455, use_reloader=False, debug=False)
+    app.run(host='0.0.0.0', port=4455, use_reloader=False, debug=True)
